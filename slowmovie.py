@@ -14,6 +14,11 @@ import os, time, sys, random
 from PIL import Image
 import ffmpeg
 import argparse
+from gpiozero import Button
+button_skip = Button(2)
+button_next = Button(3)
+button_pause = Button(4)
+button_screenshot = Button(5)
 
 # Ensure this is the correct import for your particular screen 
 from waveshare_epd import epd7in5_V2
@@ -52,7 +57,7 @@ parser.add_argument('-s', '--start',
     help="Start at a specific frame")
 args = parser.parse_args()
 
-frameDelay = float(args.delay)
+frameDelay = int(args.delay)
 print("Frame Delay = %f" %frameDelay )
 
 increment = float(args.inc)
@@ -156,54 +161,89 @@ inputVid = viddir + currentVideo
 frameCount = int(ffmpeg.probe(inputVid)['streams'][0]['nb_frames'])
 print("there are %d frames in this video" %frameCount)
 
-while 1: 
-
-    if args.random:
-        frame = random.randint(0,frameCount)
+def skipped(button):
+    global currentPosition
+    global sleepDelay
+    if button.pin.number == 2:
+        print("skip button pressed")
+        currentPosition = currentPosition + 720 
     else: 
-        frame = currentPosition
-
-    msTimecode = "%dms"%(frame*41.666666)
+        print("next button pressed")
+        currentPosition = currentPosition + increment     
         
-    # Use ffmpeg to extract a frame from the movie, crop it, letterbox it and save it as grab.jpg 
-    generate_frame(inputVid, 'grab.jpg', msTimecode, width, height)
+    sleepDelay = frameDelay
     
-    # Open grab.jpg in PIL  
-    pil_im = Image.open("grab.jpg")
-    
-    # Dither the image into a 1 bit bitmap (Just zeros and ones)
-    pil_im = pil_im.convert(mode='1',dither=Image.FLOYDSTEINBERG)
+def screenShot(button):
+    newfile = str(currentVideo) + str(frame)
+    os.popen('cp grab.jpg ScreenShots/%s.jpg' %newfile)
 
-    # display the image 
-    epd.display(epd.getbuffer(pil_im))
-    print('Diplaying frame %d of %s' %(frame,currentVideo))
+isPaused = False
+   
+def pause(button):
+    global isPaused
+    isPaused = not isPaused
+    print("paused " + str(isPaused))
     
-    currentPosition = currentPosition + increment 
-    if currentPosition >= frameCount:
-        currentPosition = 0
+button_skip.when_pressed = skipped
+button_next.when_pressed = skipped
+button_screenshot.when_pressed = screenShot
+button_pause.when_pressed = pause
+
+sleepDelay = 0
+    
+while 1: 
+    while isPaused == False:
+        if args.random:
+            frame = random.randint(0,frameCount)
+        else: 
+            frame = currentPosition
+
+        msTimecode = "%dms"%(frame*41.666666)
+            
+        # Use ffmpeg to extract a frame from the movie, crop it, letterbox it and save it as grab.jpg 
+        generate_frame(inputVid, 'grab.jpg', msTimecode, width, height)
+        
+        
+        # Open grab.jpg in PIL  
+        pil_im = Image.open("grab.jpg")
+        
+        # Dither the image into a 1 bit bitmap (Just zeros and ones)
+        pil_im = pil_im.convert(mode='1',dither=Image.FLOYDSTEINBERG)
+
+        # display the image 
+        epd.display(epd.getbuffer(pil_im))
+        print('Diplaying frame %d of %s' %(frame,currentVideo))
+        
+     
+        currentPosition = currentPosition + increment 
+        if currentPosition >= frameCount:
+            currentPosition = 0
+            log = open(logdir + '%s<progress'%currentVideo, 'w')
+            log.write(str(currentPosition))
+            log.close() 
+        
+            thisVideo = movieList.index(currentVideo)
+            if thisVideo < len(movieList)-1:
+                currentVideo = movieList[thisVideo+1]
+            else:
+                currentVideo = movieList[0]
+
         log = open(logdir + '%s<progress'%currentVideo, 'w')
         log.write(str(currentPosition))
         log.close() 
-    
-        thisVideo = movieList.index(currentVideo)
-        if thisVideo < len(movieList)-1:
-            currentVideo = movieList[thisVideo+1]
-        else:
-            currentVideo = movieList[0]
-
-    log = open(logdir + '%s<progress'%currentVideo, 'w')
-    log.write(str(currentPosition))
-    log.close() 
 
 
-    f = open('nowPlaying', 'w')
-    f.write(currentVideo)
-    f.close() 
-    
+        f = open('nowPlaying', 'w')
+        f.write(currentVideo)
+        f.close() 
+        
 
-#     epd.sleep()
-    time.sleep(frameDelay)
-    epd.init()
+    #     epd.sleep()
+        while sleepDelay < frameDelay :
+            time.sleep(1)
+            sleepDelay = sleepDelay +1
+        sleepDelay = 0;
+        epd.init()
 
 
 
